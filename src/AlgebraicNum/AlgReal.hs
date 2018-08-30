@@ -1,5 +1,7 @@
 module AlgebraicNum.AlgReal where
 import AlgebraicNum.UniPoly
+import AlgebraicNum.Interval
+import AlgebraicNum.CReal
 import qualified Data.Vector as V
 import Data.List
 
@@ -67,9 +69,6 @@ countRealRootsBetweenX :: (Ord a, Fractional a)
                        => ExtReal a -> ExtReal a -> UniPoly a -> Int
 countRealRootsBetweenX a b f = varianceAtX a s - varianceAtX b s
   where s = negativePRS f (diffP f)
-
--- | 区間を表す型
-data Interval a = Iv !a !a deriving (Show)
 
 -- s: この代数的実数における f' の符号（正なら区間 (a,b) において f は負から正に変わり、負なら区間 (a,b) において f は正から負に変わる）
 intervalsWithSign
@@ -196,8 +195,9 @@ instance Ord AlgReal where
     | b  <= a' = LT -- 区間が重なっていない場合1（y の方が大きい）
     | b' <= a  = GT -- 区間が重なっていない場合2（x の方が大きい）
     | countRealRootsBetween a'' b'' g == 1 = EQ -- 等しいかどうか？
-    -- x と y が等しくないことが確定した場合、縮小する区間の列を使って比較する（計算可能実数みたいな感じ）
-    | otherwise = compareIntervals (intervals x) (intervals y)
+    -- x と y が等しくないことが確定した場合、計算可能実数として比較する
+    | otherwise = unsafeCompareCReal (algRealToCReal x)
+                                     (algRealToCReal y)
     where f = definingPolynomial x        -- x の定義多項式
           Iv a b = isolatingInterval x    -- x の区間
           f' = definingPolynomial y       -- y の定義多項式
@@ -206,11 +206,5 @@ instance Ord AlgReal where
           a'' = max a a'  -- x の区間と y の区間の共通部分の、下限
           b'' = min b b'  -- 同、上限
 
-          -- 縮小する区間の列が与えられた時、それらの大小を比較する
-          -- （収束先が異なることが前提）
-          compareIntervals :: (Ord a)
-                           => [Interval a] -> [Interval a] -> Ordering
-          compareIntervals (Iv a b : xs) (Iv a' b' : ys)
-            | b <= a' = LT
-            | b' <= a = GT
-            | otherwise = compareIntervals xs ys
+algRealToCReal :: AlgReal -> CReal
+algRealToCReal x = CReal (intervals x)
