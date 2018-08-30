@@ -149,3 +149,46 @@ diffP (UniPoly xs)
 
 squareFree :: (Eq a, Fractional a) => UniPoly a -> UniPoly a
 squareFree f = f `divP` gcdP f (diffP f)
+
+pseudoDivModP :: (Eq a, Num a)
+              => UniPoly a -> UniPoly a -> (UniPoly a, UniPoly a)
+pseudoDivModP f g
+  | g == 0 = error "pseudoDivModP: divide by zero"
+  | degree f < degree g = (zeroP, f)
+  | otherwise = case loop 0 zeroP f of
+      (i,q,r) -> (scaleP (b^(l-i)) q, scaleP (b^(l-i)) r)
+  where
+    l = degree' f - degree' g + 1
+    b = leadingCoefficient g
+    -- invariant: scaleP i f == q * g + r
+    loop i q r
+      | degree r < degree g = (i, q, r)
+      | otherwise = loop (i + 1) (scaleP b q + q') (scaleP b r - q' * g)
+      where q' = UniPoly (V.drop (degree' g) (coeffVectAsc r))
+
+pseudoDivP, pseudoModP :: (Eq a, Num a)
+                       => UniPoly a -> UniPoly a -> UniPoly a
+pseudoDivP f g = fst (pseudoDivModP f g)
+pseudoModP f g = snd (pseudoDivModP f g)
+
+-- 整数係数多項式の内容を計算する
+content :: UniPoly Integer -> Integer
+content f = gcdV 0 $ coeffDesc f -- 短絡評価を考えなければ @foldr gcd 0 $ coeffDesc f@ でも良い
+  where
+    -- 'foldl'/'foldr' と 'gcd' の組み合わせでは GCD が 1 になっても残りの部分が評価される。
+    -- 列の途中で GCD が 1 になれば全体の GCD は 1 で確定なので、そういう短絡評価する。
+    gcdV :: Integer -> [Integer] -> Integer
+    gcdV 1 _ = 1
+    gcdV a [] = a
+    gcdV a (x:xs) = gcdV (gcd x a) xs
+
+-- 整数係数多項式の内容と原始部分を計算する
+contentAndPrimitivePart :: UniPoly Integer -> (Integer, UniPoly Integer)
+contentAndPrimitivePart f
+  | c == 1 = (c, f)
+  | otherwise = (c, mapCoeff (`div` c) f)
+  where c = content f
+
+-- 整数係数多項式の原始部分を計算する
+primitivePart :: UniPoly Integer -> UniPoly Integer
+primitivePart = snd . contentAndPrimitivePart
