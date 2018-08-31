@@ -148,7 +148,7 @@ diffP (UniPoly xs)
                 $ V.imap (\i x -> fromIntegral i * x) xs
 
 squareFree :: (Eq a, Fractional a) => UniPoly a -> UniPoly a
-squareFree f = f `divP` gcdP f (diffP f)
+squareFree f = f `divP` monicGcdP f (diffP f)
 
 pseudoDivModP :: (Eq a, Num a)
               => UniPoly a -> UniPoly a -> (UniPoly a, UniPoly a)
