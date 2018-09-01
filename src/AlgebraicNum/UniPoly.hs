@@ -1,4 +1,5 @@
 module AlgebraicNum.UniPoly where
+import AlgebraicNum.Class
 import qualified Data.Vector as V
 import Data.Vector ((!))
 
@@ -101,15 +102,36 @@ scaleP a (UniPoly xs)
   | a == 0 = zeroP
   | otherwise = UniPoly $ V.map (* a) xs
 
+unscaleP :: (Eq a, IntegralDomain a) => a -> UniPoly a -> UniPoly a
+unscaleP a f = mapCoeff (`divide` a) f
+
 valueAt :: (Num a) => a -> UniPoly a -> a
 valueAt t (UniPoly xs) = V.foldr' (\a b -> a + t * b) 0 xs
 
 valueAtT :: (Num b) => (a -> b) -> b -> UniPoly a -> b
 valueAtT f t (UniPoly xs) = V.foldr' (\a b -> f a + t * b) 0 xs
 
+-- homogeneousValueAt \(u\) \(v\) (\(a_n X^n + \cdots + a_1 X + a_0\))
+-- = (\(a_n u^n + a_{n-1} u^{n-1} v + \cdots + a_1 u v^{n-1} + a_0 v^n\), \(v^n\))
+homogeneousValueAt :: (Eq a, Num a) => a -> a -> UniPoly a -> (a, a)
+homogeneousValueAt u v f@(UniPoly coeff)
+  | f == 0 = (0, 1)
+  | otherwise = (V.foldr' (\x y -> x + u * y) 0
+                 $ V.zipWith (*) coeff denseq, V.head denseq)
+  where denseq = V.reverse (V.iterateN (V.length coeff) (* v) 1)
+
 -- 'f `compP` g = f(g(x))'
 compP :: (Eq a, Num a) => UniPoly a -> UniPoly a -> UniPoly a
 compP f g = valueAtT constP g f
+
+-- homogeneousCompP (\(a_n X^n + \cdots + a_1 X + a_0\)) \(g\) \(v\)
+-- = (\(a_n g^n + a_{n-1} g^{n-1} v + \cdots + a_1 g v^{n-1} + a_0 v^n\), \(v^n\))
+homogeneousCompP :: (Eq a, Num a) => UniPoly a -> UniPoly a -> a -> (UniPoly a, a)
+homogeneousCompP f@(UniPoly coeff) g v
+  | f == 0 = (0, 1)
+  | otherwise = (V.foldr' (\x y -> constP x + g * y) 0
+                 $ V.zipWith (*) coeff denseq, V.head denseq)
+  where denseq = V.reverse (V.iterateN (V.length coeff) (* v) 1)
 
 -- \(x^n f(1/x)\)
 revPoly :: (Eq a, Num a) => UniPoly a -> UniPoly a
@@ -147,8 +169,8 @@ diffP (UniPoly xs)
   | otherwise = fromCoeffVectAsc $ V.tail
                 $ V.imap (\i x -> fromIntegral i * x) xs
 
-squareFree :: (Eq a, Fractional a) => UniPoly a -> UniPoly a
-squareFree f = f `divP` monicGcdP f (diffP f)
+squareFree :: (Eq a, GCDDomain a) => UniPoly a -> UniPoly a
+squareFree f = f `divide` gcdD f (diffP f)
 
 pseudoDivModP :: (Eq a, Num a)
               => UniPoly a -> UniPoly a -> (UniPoly a, UniPoly a)
@@ -171,24 +193,68 @@ pseudoDivP, pseudoModP :: (Eq a, Num a)
 pseudoDivP f g = fst (pseudoDivModP f g)
 pseudoModP f g = snd (pseudoDivModP f g)
 
--- 整数係数多項式の内容を計算する
-content :: UniPoly Integer -> Integer
-content f = gcdV 0 $ coeffDesc f -- 短絡評価を考えなければ @foldr gcd 0 $ coeffDesc f@ でも良い
-  where
-    -- 'foldl'/'foldr' と 'gcd' の組み合わせでは GCD が 1 になっても残りの部分が評価される。
-    -- 列の途中で GCD が 1 になれば全体の GCD は 1 で確定なので、そういう短絡評価する。
-    gcdV :: Integer -> [Integer] -> Integer
-    gcdV 1 _ = 1
-    gcdV a [] = a
-    gcdV a (x:xs) = gcdV (gcd x a) xs
+-- | 多項式の内容を計算する
+content :: (GCDDomain a) => UniPoly a -> a
+content = contentDesc . coeffDesc
 
--- 整数係数多項式の内容と原始部分を計算する
-contentAndPrimitivePart :: UniPoly Integer -> (Integer, UniPoly Integer)
+-- | 多項式の内容と原始部分を計算する
+contentAndPrimitivePart
+  :: (Eq a, GCDDomain a) => UniPoly a -> (a, UniPoly a)
 contentAndPrimitivePart f
   | c == 1 = (c, f)
-  | otherwise = (c, mapCoeff (`div` c) f)
+  | otherwise = (c, unscaleP c f)
   where c = content f
 
--- 整数係数多項式の原始部分を計算する
-primitivePart :: UniPoly Integer -> UniPoly Integer
+-- | 多項式の原始部分を計算する
+primitivePart :: (Eq a, GCDDomain a) => UniPoly a -> UniPoly a
 primitivePart = snd . contentAndPrimitivePart
+
+instance (Eq a, IntegralDomain a) => IntegralDomain (UniPoly a) where
+  divide f g
+    | g == 0 = error "divide: divide by zero"
+    | degree f < degree g = zeroP -- f should be zero
+    | otherwise = loop zeroP f
+    where
+      l = degree' f - degree' g + 1
+      b = leadingCoefficient g
+      -- invariant: f == q * g + r
+      loop q r | degree r < degree g = q -- r should be zero
+               | otherwise = loop (q + q') (r - q' * g)
+        where q' = unscaleP b (UniPoly (V.drop (degree' g) (coeffVectAsc r)))
+
+gcdWithSubrPRS :: (Eq a, IntegralDomain a) => UniPoly a -> UniPoly a -> UniPoly a
+gcdWithSubrPRS f 0 = f
+gcdWithSubrPRS f g
+  | degree f < degree g = gcdWithSubrPRS g f
+  | otherwise = case pseudoModP f g of
+      0 -> g
+      rem -> let !d = degree' f - degree' g
+                 !s = (-1)^(d + 1) * rem
+             in loop d (-1) g s
+  where
+    loop !_ _ f 0 = f
+    loop !d psi f g = case pseudoModP f g of
+      0 -> g
+      rem -> let !d' = degree' f - degree' g
+                 !c = leadingCoefficient f
+                 !psi' | d == 0 = psi
+                       | d > 0 = ((-c)^d) `divide` (psi^(d-1))
+                 !beta = -c * psi' ^ d'
+                 !s = unscaleP beta rem
+             in loop d' psi' g s
+
+instance (Eq a, GCDDomain a) => GCDDomain (UniPoly a) where
+  gcdD x y
+    = scaleP (gcdD xc yc) $ primitivePart (gcdWithSubrPRS xp yp)
+    where (xc,xp) = contentAndPrimitivePart x
+          (yc,yp) = contentAndPrimitivePart y
+  contentDesc [] = 0
+  contentDesc xs = scaleP (contentDesc (map fst ys)) $ gcdV 0 (map snd ys)
+    where
+      ys = map contentAndPrimitivePart xs
+      gcdV 1 _ = 1
+      gcdV a [] = a
+      gcdV a (x:xs) = gcdV (primitivePart $ gcdWithSubrPRS x a) xs
+
+instance (Eq a, Fractional a, GCDDomain a) => EuclideanDomain (UniPoly a) where
+  divModD = divModP
