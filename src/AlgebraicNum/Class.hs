@@ -1,6 +1,8 @@
 module AlgebraicNum.Class where
 import Data.Ratio
 import Data.List
+import Data.FiniteField
+import GHC.TypeLits (KnownNat)
 
 -- | 整域
 --
@@ -60,3 +62,8 @@ infixl 7 `modD`
 
 instance EuclideanDomain Integer where
   divModD = divMod
+
+instance (KnownNat p) => IntegralDomain (PrimeField p) where
+  divide = (/)
+instance (KnownNat p) => GCDDomain (PrimeField p) where
+  gcdD = fieldGcd; contentDesc = fieldContentDesc
