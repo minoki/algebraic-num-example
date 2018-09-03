@@ -5,7 +5,7 @@ import AlgebraicNum.Interval
 import AlgebraicNum.CReal
 import AlgebraicNum.Resultant
 import AlgebraicNum.Factor.SquareFree
-import AlgebraicNum.Factor.BigPrime
+import AlgebraicNum.Factor.Hensel
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Vector as V
 import Data.List
@@ -180,7 +180,7 @@ mkAlgRealWithCReal f (CReal xs) = sieve squareFreeFactors xs
 
     sieve :: [UniPoly Integer] -> [Interval Rational] -> AlgReal
     sieve [] _ = error "invalid real number"
-    sieve [g] xs = sieve2 (unsafePerformIO (factorBigPrimeIO g)) xs
+    sieve [g] xs = sieve2 (unsafePerformIO (factorHenselIO g)) xs
     sieve gs (x:xs) = sieve
       (filter (isCompatibleWithZero . valueAtT fromInteger x) gs) xs
 
@@ -213,8 +213,8 @@ realRootsBetweenM f lb ub
   | f == 0 = error "realRoots: zero" -- 0 の実根を求めようとするのはエラー
   | degree' f == 0 = []  -- 多項式が 0 でない定数の場合、実根はない
   | otherwise = sortOn fst $ do
-      (g,i) <- yunSFF (primitivePart f)     -- f を無平方分解する
-      h <- unsafePerformIO (factorBigPrimeIO g) -- g を因数分解する
+      (g,i) <- yunSFF (primitivePart f)       -- f を無平方分解する
+      h <- unsafePerformIO (factorHenselIO g) -- g を因数分解する
       let seq = negativePRS h (diffP h)  -- h のスツルム列
           bound = rootBound h            -- 根の限界
           lb' = clamp (-bound) bound lb  -- 与えられた区間の下界（有限）
