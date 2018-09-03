@@ -4,6 +4,9 @@ import AlgebraicNum.UniPoly
 import AlgebraicNum.Interval
 import AlgebraicNum.CReal
 import AlgebraicNum.Resultant
+import AlgebraicNum.Factor.SquareFree
+import AlgebraicNum.Factor.BigPrime
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Vector as V
 import Data.List
 import Data.Ratio
@@ -151,30 +154,44 @@ intervals :: AlgReal -> [Interval Rational]
 intervals (FromRat x) = repeat (Iv x x)
 intervals (AlgReal f s a b) = intervalsWithSign f s a b
 
--- | 与えられた定義多項式と、分離区間 (a,b] から、代数的実数を構築する。
-mkAlgReal :: UniPoly Integer -> Interval Rational -> AlgReal
-mkAlgReal f (Iv a b)
-  -- 0 の場合は FromRat 0 を使う
-  | a < 0 && b >= 0 && isZeroAtZQ 0 f = FromRat 0
+-- | 与えられた既約多項式と、分離区間 (a,b] から、代数的実数を構築する。
+mkAlgRealWithIrreduciblePoly
+  :: UniPoly Integer -> Interval Rational -> AlgReal
+mkAlgRealWithIrreduciblePoly f (Iv a b)
   -- 区間が空の場合はエラー
-  | b <= a = error "mkAlgReal: empty range"
-  -- 区間の端点で多項式の値が 0 でないようにする
-  | isZeroAtZQ b' f' = FromRat b'
+  | b < a = error "mkAlgReal: empty range"
+  -- 最小多項式が1次の場合は、ただの有理数
+  | degree f == Just 1 = case coeffAsc f of
+                           [a,b] -> FromRat (-a % b)
+  -- 区間の符号が確定したものをデータ構築子として使う
+  | otherwise = AlgReal f s a' b'
+  where s | signAtZQ b f > 0 = 1
+          | signAtZQ b f < 0 = -1
+          | otherwise = error "f is not irreducible"
+        Just (Iv a' b') = find (not . isCompatibleWithZero)
+                               (intervalsWithSign f s a b)
 
-  -- 定数項の 0 を取り除き、また、区間の符号が確定したものをデータ構築子として使う
-  | otherwise = AlgReal f' s a' b'
-  where nonZeroPart xs | V.head xs == 0 = nonZeroPart (V.tail xs)
-                       | otherwise = xs
-        f' = UniPoly $ nonZeroPart (coeffVectAsc f)
-        s | signAtZQ b f' > 0 = 1
-          | signAtZQ b f' < 0 = -1
-          | otherwise = signAtZQ b (diffP f')
-        Just (Iv a' b') = find (\(Iv x y) -> 0 < x || y < 0) (intervalsWithSign f' s a b)
-
--- | 与えられた無平方多項式と、その実根を表す計算可能実数から、代数的実数を構築する
+-- | 与えられた多項式と、その根に収束する計算可能実数から、代数的実数を構築する。
 mkAlgRealWithCReal :: UniPoly Integer -> CReal -> AlgReal
-mkAlgRealWithCReal f (CReal xs) = mkAlgReal f
-  $ head $ dropWhile (\(Iv a b) -> countRealRootsBetweenZQ a b f >= 2) xs
+mkAlgRealWithCReal f (CReal xs) = sieve squareFreeFactors xs
+  where
+    squareFreeFactors :: [UniPoly Integer]
+    squareFreeFactors = map fst $ yunSFF $ primitivePart f
+
+    sieve :: [UniPoly Integer] -> [Interval Rational] -> AlgReal
+    sieve [] _ = error "invalid real number"
+    sieve [g] xs = sieve2 (unsafePerformIO (factorBigPrimeIO g)) xs
+    sieve gs (x:xs) = sieve
+      (filter (isCompatibleWithZero . valueAtT fromInteger x) gs) xs
+
+    sieve2 :: [UniPoly Integer] -> [Interval Rational] -> AlgReal
+    sieve2 [] _ = error "invalid real number"
+    sieve2 [g] xs
+      = case dropWhile (\(Iv a b) ->
+                           countRealRootsBetweenZQ a b g >= 2) xs of
+          iv : _ -> mkAlgRealWithIrreduciblePoly g iv
+    sieve2 gs (x:xs) = sieve2
+      (filter (isCompatibleWithZero . valueAtT fromInteger x) gs) xs
 
 rootBound :: UniPoly Integer -> Rational
 rootBound f
@@ -183,32 +200,48 @@ rootBound f
   where lc = leadingCoefficient f
 
 realRoots :: UniPoly Integer -> [AlgReal]
-realRoots f = realRootsBetween f NegativeInfinity PositiveInfinity
+realRoots f = map fst (realRootsM f)
 
-realRootsBetween
-  :: UniPoly Integer -> ExtReal Rational -> ExtReal Rational -> [AlgReal]
-realRootsBetween f lb ub
-  | f == 0 = error "realRoots: zero" -- 多項式 0 の実根を求めようとするのはエラー
-  | degree' f == 0 = []              -- 多項式が 0 でない定数の場合、実根はない
-  | otherwise = bisect (lb',varianceAtZQX lb seq) (ub',varianceAtZQX ub seq)
+realRootsM :: UniPoly Integer -> [(AlgReal,Int)]
+realRootsM f = realRootsBetweenM f NegativeInfinity PositiveInfinity
+
+-- 多項式の実根のうち、指定された区間にあるものを、重複度込みで返す
+realRootsBetweenM :: UniPoly Integer
+                  -> ExtReal Rational -> ExtReal Rational
+                  -> [(AlgReal,Int)]
+realRootsBetweenM f lb ub
+  | f == 0 = error "realRoots: zero" -- 0 の実根を求めようとするのはエラー
+  | degree' f == 0 = []  -- 多項式が 0 でない定数の場合、実根はない
+  | otherwise = sortOn fst $ do
+      (g,i) <- yunSFF (primitivePart f)     -- f を無平方分解する
+      h <- unsafePerformIO (factorBigPrimeIO g) -- g を因数分解する
+      let seq = negativePRS h (diffP h)  -- h のスツルム列
+          bound = rootBound h            -- 根の限界
+          lb' = clamp (-bound) bound lb  -- 与えられた区間の下界（有限）
+          ub' = clamp (-bound) bound ub  -- 与えられた区間の上界（有限）
+      a <- bisect h seq (lb',varianceAtZQX lb seq)
+                        (ub',varianceAtZQX ub seq)
+      return (a,i)
   where
-    f' = squareFree f               -- 無平方多項式に直す
-    seq = negativePRS f' (diffP f') -- f' のスツルム列
-    bound = rootBound f'            -- 根の限界
-    lb' = clamp (-bound) bound lb   -- 与えられた区間の下界（有限）
-    ub' = clamp (-bound) bound ub   -- 与えられた区間の上界（有限）
-
-    -- 実装のキモ：与えられた区間の実根を列挙する。区間の端点におけるスツルム列の符号の変化も受け取る。
-    bisect :: (Rational,Int) -> (Rational,Int) -> [AlgReal]
-    bisect p@(a,i) q@(b,j)
+    -- 実装のキモ：与えられた区間の実根を列挙する
+    -- 区間の端点におけるスツルム列の符号の変化を受け取る
+    bisect :: UniPoly Integer -> [UniPoly Integer]
+           -> (Rational,Int) -> (Rational,Int) -> [AlgReal]
+    bisect f seq p@(a,i) q@(b,j)
       | i <= j     = []  -- 区間に実根が存在しない場合
-      | i == j + 1 = [mkAlgReal f (Iv a b)] -- 区間にちょうど一個の実根が存在する場合
-      | otherwise  = bisect p r ++ bisect r q -- それ以外：複数個の実根が存在するので区間を分割する
+      -- 区間にちょうど一個の実根が存在する場合
+      | i == j + 1 = [mkAlgRealWithIrreduciblePoly f (Iv a b)]
+      -- それ以外：複数個の実根が存在するので区間を分割する
+      | otherwise  = bisect f seq p r ++ bisect f seq r q
       where c = (a + b) / 2
             r = (c,varianceAtZQ c seq)
 
-realRootsBetweenQ
-  :: UniPoly Rational -> ExtReal Rational -> ExtReal Rational -> [AlgReal]
+realRootsBetween :: UniPoly Integer
+                 -> ExtReal Rational -> ExtReal Rational
+                 -> [AlgReal]
+realRootsBetween f lb ub = map fst (realRootsBetweenM f lb ub)
+
+realRootsBetweenQ :: UniPoly Rational -> ExtReal Rational -> ExtReal Rational -> [AlgReal]
 realRootsBetweenQ f lb ub
   | f == 0 = error "realRoots: zero"
   | degree' f == 0 = []
@@ -283,20 +316,21 @@ instance Num AlgReal where
   negate (AlgReal f s a b) = AlgReal (compP f (-ind)) (-s) (-b) (-a)
 
   FromRat x + FromRat y = FromRat (x + y)
-  FromRat k + AlgReal f s a b
-    = mkAlgReal (fst $ homogeneousCompP f (definingPolynomial (FromRat k)) (denominator k)) (Iv (a + k) (b + k))
+  FromRat k + AlgReal f _ a b
+    = mkAlgRealWithIrreduciblePoly (primitivePart $ fst $ homogeneousCompP f (definingPolynomial (FromRat k)) (denominator k)) (Iv (a + k) (b + k))
   x@(AlgReal {}) + y@(FromRat _) = y + x
-  x + y = mkAlgRealWithCReal (squareFree $ resultant f_x_y g) (algRealToCReal x + algRealToCReal y)
+  x + y = mkAlgRealWithCReal (resultant f_x_y g) (algRealToCReal x + algRealToCReal y)
     where f = mapCoeff constP $ definingPolynomial x
           f_x_y = compP f (constP ind - ind) -- \(f(x-y)\)
           g = mapCoeff constP $ definingPolynomial y
 
   FromRat x - FromRat y = FromRat (x - y)
-  FromRat k - AlgReal f s a b
-    = mkAlgReal (fst $ homogeneousCompP f (- definingPolynomial (FromRat k)) (denominator k)) (Iv (k - b) (k - a))
-  AlgReal f s a b - FromRat k
-    = mkAlgReal (fst $ homogeneousCompP f (definingPolynomial (FromRat (-k))) (denominator k)) (Iv (a - k) (b - k))
-  x - y = mkAlgRealWithCReal (squareFree $ resultant f_y_x g) (algRealToCReal x - algRealToCReal y)
+  FromRat k - AlgReal f _ a b
+    = mkAlgRealWithIrreduciblePoly (primitivePart $ fst $ homogeneousCompP f (- definingPolynomial (FromRat k)) (denominator k)) (Iv (k - b) (k - a))
+  AlgReal f _ a b - FromRat k
+    = mkAlgRealWithIrreduciblePoly (primitivePart $ fst $ homogeneousCompP f (definingPolynomial (FromRat (-k))) (denominator k)) (Iv (a - k) (b - k))
+  x - y = mkAlgRealWithCReal (resultant f_y_x g)
+                             (algRealToCReal x - algRealToCReal y)
     where f = mapCoeff constP $ definingPolynomial x
           f_y_x = compP f (constP ind + ind) -- \(f(y+x)\)
           g = mapCoeff constP $ definingPolynomial y
@@ -310,8 +344,7 @@ instance Num AlgReal where
       f_x_k = fst $ homogeneousValueAt (scaleP (denominator k) ind)
               (fromInteger $ numerator k) (mapCoeff fromInteger f) -- \(f(x/k)\)
   x@(AlgReal {}) * y@(FromRat _) = y * x
-  x * y = mkAlgRealWithCReal (squareFree $ resultant y_f_x_y g)
-                             (algRealToCReal x * algRealToCReal y)
+  x * y = mkAlgRealWithCReal (resultant y_f_x_y g) (algRealToCReal x * algRealToCReal y)
     where f = definingPolynomial x
           y_f_x_y = fromCoeffVectAsc $ V.reverse
                     $ V.imap (\i a -> constP a * ind^i) $ coeffVectAsc f -- \(y^n f(x/y)\)
