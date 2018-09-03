@@ -73,3 +73,16 @@ instance (KnownNat p) => Random (PrimeField p) where
                                    ,Data.FiniteField.toInteger hi) g of
                         (a,g') -> (fromInteger a, g')
   random = randomR (minBound, maxBound)
+
+-- | 拡張されたユークリッドの互除法
+--
+-- 入力：多項式 \(f\), \(g\)
+-- 出力 \((h,s,t)\):
+--   \(h=\gcd(f,g)\)（単数倍を除く）
+--   \(sf+tg=h\)
+exEuclid :: (Eq a, EuclideanDomain a) => a -> a -> (a, a, a)
+exEuclid f g = loop 1 0 0 1 f g
+  where loop u0 u1 v0 v1 f 0 = (f, u0, v0)
+        loop u0 u1 v0 v1 f g =
+          case divModD f g of
+            (q,r) -> loop u1 (u0 - q * u1) v1 (v0 - q * v1) g r

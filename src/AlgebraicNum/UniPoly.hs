@@ -193,6 +193,18 @@ pseudoDivP, pseudoModP :: (Eq a, Num a)
 pseudoDivP f g = fst (pseudoDivModP f g)
 pseudoModP f g = snd (pseudoDivModP f g)
 
+-- | division by a monic polynomial
+monicDivMod :: (Eq a, Num a) => UniPoly a -> UniPoly a -> (UniPoly a, UniPoly a)
+monicDivMod f g
+  -- leadingCoefficient g must be 1
+  | leadingCoefficient g /= 1 = error "monicDivMod: g must be monic"
+  | otherwise = loop zeroP f
+  where
+    -- invariant: f == q * g + r
+    loop q r | degree r < degree g = (q, r)
+             | otherwise = loop (q + q') (r - q' * g)
+      where q' = UniPoly (V.drop (degree' g) (coeffVectAsc r))
+
 -- | 多項式の内容を計算する
 content :: (GCDDomain a) => UniPoly a -> a
 content = contentDesc . coeffDesc
