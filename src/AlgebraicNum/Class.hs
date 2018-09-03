@@ -3,6 +3,7 @@ import Data.Ratio
 import Data.List
 import Data.FiniteField
 import GHC.TypeLits (KnownNat)
+import System.Random
 
 -- | 整域
 --
@@ -67,3 +68,8 @@ instance (KnownNat p) => IntegralDomain (PrimeField p) where
   divide = (/)
 instance (KnownNat p) => GCDDomain (PrimeField p) where
   gcdD = fieldGcd; contentDesc = fieldContentDesc
+instance (KnownNat p) => Random (PrimeField p) where
+  randomR (lo,hi) g = case randomR (Data.FiniteField.toInteger lo
+                                   ,Data.FiniteField.toInteger hi) g of
+                        (a,g') -> (fromInteger a, g')
+  random = randomR (minBound, maxBound)
