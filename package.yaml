@@ -26,6 +26,8 @@ dependencies:
 - random
 - mtl
 - array
+- arithmoi
+- reflection
 
 default-extensions:
 - BangPatterns
