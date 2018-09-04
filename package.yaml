@@ -25,6 +25,7 @@ dependencies:
 - finite-field
 - random
 - mtl
+- array
 
 default-extensions:
 - BangPatterns
