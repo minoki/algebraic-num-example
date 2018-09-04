@@ -461,5 +461,8 @@ realRootsA f =
   | (g,i) <- yunSFF $ primitivePart f
   , let g' = squareFree $ elimN g
   , x <- realRoots g'
+  , let xc = algRealToCReal x
+  , let y' = toIntervals $ valueAtT algRealToCReal xc g
+  , isCompatibleWithZero (y' !! 5)
   , valueAt x g == 0
   ]
