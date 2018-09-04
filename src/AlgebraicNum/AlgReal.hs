@@ -465,5 +465,5 @@ realRootsA f =
   , let y' = toIntervals $ valueAtT algRealToCReal xc g
   , isCompatibleWithZero (y' !! 5)
   , let Iv x0 x1 = head $ dropWhile (\(Iv a b) -> countRealRootsBetweenZQ a b g' >= 2) $ toIntervals xc
-  , countRealRootsBetween (fromRational x0) (fromRational x1) g == 1
+  , signAt (fromRational x0) g * signAt (fromRational x1) g <= 0
   ]
