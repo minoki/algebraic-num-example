@@ -6,8 +6,9 @@ import AlgebraicNum.CReal
 import AlgebraicNum.Resultant
 import AlgebraicNum.Factor.SquareFree
 import AlgebraicNum.Factor.Hensel
+import AlgebraicNum.MultPoly
 import System.IO.Unsafe (unsafePerformIO)
-import qualified Data.Vector as V
+import qualified Data.Vector as V (reverse, imap)
 import Data.List
 import Data.Ratio
 
@@ -437,3 +438,28 @@ instance IntegralDomain AlgReal where
   divide = (/)
 instance GCDDomain AlgReal where
   gcdD = fieldGcd; contentDesc = fieldContentDesc
+
+toMultPoly :: (Eq a, Num a) => UniPoly a -> MultPoly (UniPoly Integer)
+toMultPoly 0 = 0
+toMultPoly f = sum [multInd i * Scalar (ind^i) | i <- [0..degree' f]]
+
+-- Eliminate algebraic numbers in the coefficients by multiplying conjugates
+elimN :: (Eq a, Num a, IsAlgebraic a) => UniPoly a -> UniPoly Integer
+elimN f = case loop (toMultPoly f) (map definingPolynomial (coeffAsc f)) of
+  Just g -> g
+  Nothing -> error "elimN: internal error"
+  where
+    loop :: MultPoly (UniPoly Integer) -> [UniPoly Integer]
+         -> Maybe (UniPoly Integer)
+    loop m [] = multToScalar m
+    loop m (x : xs)
+      = loop (resultant (mapCoeff (Scalar . constP) x) (multToUni m)) xs
+
+realRootsA :: UniPoly AlgReal -> [(AlgReal,Int)]
+realRootsA f =
+  [ (x,i)
+  | (g,i) <- yunSFF $ primitivePart f
+  , let g' = squareFree $ elimN g
+  , x <- realRoots g'
+  , valueAt x g == 0
+  ]
